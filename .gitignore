@@ -1,3 +1,10 @@
+.idea/
+*.iml
+vendor/
+
+leftTicket.log*
+station_name.js
+
 # Binaries for programs and plugins
 *.exe
 *.dll
