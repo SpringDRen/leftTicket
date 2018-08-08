@@ -30,9 +30,12 @@ var (
 	queryStart   = "06:00"         // 12306服务时间
 	queryEnd     = "23:00"         // 12306服务时间
 	queryXurl    string            // 查询票务信息url
-	headers      map[string]string //需要的header
-	allMissions  []QueryInfo       //所有任务信息
-	period       = 2               //查询周期，单位分钟
+	headers      map[string]string // 需要的header
+	allMissions  []QueryInfo       // 所有任务信息
+	period       = 2               // 查询周期，单位分钟
+	async        = true            // 是否开启任务并行
+	retry        = 3               // 查询失败重试次数
+	retryPeriod  = 1               // 重试休眠间隔，单位s
 )
 
 //查询票务信息
@@ -64,6 +67,11 @@ func queryX(queryInfo QueryInfo) []byte {
 		return nil
 	}
 	defer resp.Body.Close()
+	contentHeader := resp.Header.Get("Content-Type")
+	if !strings.Contains(contentHeader, "application/json") {
+		easylog.Debug("not json.", contentHeader)
+		return nil
+	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		easylog.Error("queryx can't read respBody..", err)
@@ -246,6 +254,55 @@ func filterTk(allTks []TicketInfo, queryInfo QueryInfo) (filterTks []TicketInfo,
 	return filterTks, canbuy
 }
 
+// 一次完整的查询任务
+func oneMission(jobIndex int, queryOnce QueryInfo, chDone chan string) {
+	easylog.Debug("job", jobIndex+1, "start :", queryOnce)
+	// 查询失败重试
+	var ticketstr []byte
+	for i := 0; ; i++ {
+		ticketstr = queryX(queryOnce)
+		if ticketstr != nil || i >= retry {
+			break
+		}
+		time.Sleep(time.Duration(retryPeriod) * time.Second)
+		easylog.Debug("job", jobIndex+1, queryOnce, "retry", i+1)
+	}
+	if ticketstr == nil {
+		easylog.Info("job", jobIndex+1, queryOnce, "job failed.")
+		chDone <- "query nil"
+		return
+	}
+	allTickets := parseTicketStr(ticketstr)
+	filterTks, canbuyTks := filterTk(allTickets, queryOnce)
+	easylog.Info("job", jobIndex+1, queryOnce, " job done. all=", len(allTickets),
+		", can buy=", canbuyTks, ", filter=", len(filterTks))
+	if filterTks != nil && len(filterTks) > 0 {
+		//拼接信息
+		var textMsgBuf bytes.Buffer
+		textMsgBuf.WriteString(queryOnce.Day)
+		for _, tk := range filterTks {
+			if tkbytes := tk.getTkMsg(queryOnce); tkbytes != nil {
+				textMsgBuf.WriteRune('\r')
+				textMsgBuf.WriteRune('\n')
+				textMsgBuf.Write(tkbytes)
+			}
+		}
+		textMsg := textMsgBuf.String()
+		easylog.Info("job", jobIndex+1, "查询余票成功：\n", textMsg)
+		//发送邮件
+		if Mailflag {
+			SendText(queryOnce.Day, textMsg)
+		}
+		//发送微信
+		if Weixinflag {
+			SendToQyweixin(textMsg)
+		}
+		chDone <- "send end"
+	} else {
+		chDone <- "filterTks nil"
+	}
+}
+
 //一次任务查询
 func oneJob() {
 	//先判断是否在服务时间
@@ -255,41 +312,23 @@ func oneJob() {
 		easylog.Debug("非售票时间")
 		return
 	}
-	easylog.Debug("once job start. missions size =", len(allMissions))
+	easylog.Info("once job start. missions size =", len(allMissions))
+	chDone := make(chan string, len(allMissions))
+	start := time.Now().UnixNano()
 	for i, queryOnce := range allMissions {
-		easylog.Debug("job", i, "start :", queryOnce)
-		ticketstr := queryX(queryOnce)
-		if ticketstr == nil {
-			continue
-		}
-		allTickets := parseTicketStr(ticketstr)
-		filterTks, canbuyTks := filterTk(allTickets, queryOnce)
-		easylog.Info(queryOnce, " job done. all=", len(allTickets),
-			", can buy=", canbuyTks, ", filter=", len(filterTks))
-		if filterTks != nil && len(filterTks) > 0 {
-			//拼接信息
-			var textMsgBuf bytes.Buffer
-			textMsgBuf.WriteString(queryOnce.Day)
-			for _, tk := range filterTks {
-				if tkbytes := tk.getTkMsg(queryOnce); tkbytes != nil {
-					textMsgBuf.WriteRune('\r')
-					textMsgBuf.WriteRune('\n')
-					textMsgBuf.Write(tkbytes)
-				}
-			}
-			textMsg := textMsgBuf.String()
-			easylog.Info("查询余票成功：", textMsg)
-			//发送邮件
-			if Mailflag {
-				SendText(queryOnce.Day, textMsg)
-			}
-			//发送微信
-			if Weixinflag {
-				SendToQyweixin(textMsg)
-			}
+		if async {
+			go oneMission(i, queryOnce, chDone)
+		} else {
+			oneMission(i, queryOnce, chDone)
 		}
 	} //end for allMissions
-	easylog.Info("once job end.")
+	for range allMissions {
+		// ignore result
+		<-chDone
+	}
+	close(chDone)
+	end := time.Now().UnixNano()
+	easylog.Info("once job end. tookTime =", (end-start)/1000000, "ms")
 }
 
 //初始任务配置
@@ -343,54 +382,79 @@ func InitConf() (bool, string) {
 			return false, "period 配置有误"
 		}
 	}
+	asyncstr, ok := cfg["async"]
+	if ok {
+		async, _ = strconv.ParseBool(asyncstr)
+	}
+	retrystr, ok := cfg["retry"]
+	if ok {
+		retry, _ = strconv.Atoi(retrystr)
+	}
+	retryPeriodstr, ok := cfg["retryPeriod"]
+	if ok {
+		retryPeriod, _ = strconv.Atoi(retryPeriodstr)
+		if retryPeriod < 1 {
+			retryPeriod = 1
+		}
+	}
 	//初始化所有任务配置
 	arr := strings.Split(all, ",")
-	allMissions = make([]QueryInfo, len(arr))
-	for i, sectionName := range arr {
+	for _, sectionName := range arr {
 		onceSecCfg := GetSectionCfg(CONF_FILE, sectionName)
 		if onceSecCfg == nil {
 			return false, "任务 " + sectionName + " 未配置"
 		}
 		easylog.Debug(sectionName, " cfg: ", onceSecCfg)
-		var queryInfo QueryInfo
-		//乘车日期
-		if day, ok := onceSecCfg["day"]; !ok {
-			return false, sectionName + " day 配置有误"
-		} else {
-			if _, err := time.Parse(DAY_FORMAT, day); err != nil {
-				return false, sectionName + " day 格式不正确，必须为yyyy-MM-dd"
-			} else {
-				queryInfo.Day = day
-			}
-		}
 		//始发站
-		if from, ok := onceSecCfg["from"]; !ok {
+		from, fromeCode := "", ""
+		if from, ok = onceSecCfg["from"]; !ok {
 			return false, sectionName + " from 配置有误"
 		} else {
-			queryInfo.From = from
-			queryInfo.FromCode = GetCodeByChname(from)
-			if queryInfo.FromCode == "" {
+			fromeCode = GetCodeByChname(from)
+			if fromeCode == "" {
 				return false, sectionName + " 不存在的车站名：" + from
 			}
 		}
 		//抵达站
-		if to, ok := onceSecCfg["to"]; !ok {
+		to, toCode := "", ""
+		if to, ok = onceSecCfg["to"]; !ok {
 			return false, sectionName + " to 配置有误"
 		} else {
-			queryInfo.To = to
-			queryInfo.ToCode = GetCodeByChname(to)
-			if queryInfo.ToCode == "" {
+			toCode = GetCodeByChname(to)
+			if toCode == "" {
 				return false, sectionName + " 不存在的车站名：" + to
 			}
 		}
-		queryInfo.Starttime = onceSecCfg["starttime"]
-		queryInfo.Endtime = onceSecCfg["endtime"]
-		queryInfo.Train_type = onceSecCfg["train_type"]
-		queryInfo.Train = onceSecCfg["train"]
-		queryInfo.Prior_seat = onceSecCfg["prior_seat"]
-		allMissions[i] = queryInfo
+		//乘车日期
+		if days, ok := onceSecCfg["day"]; !ok {
+			return false, sectionName + " day 配置有误"
+		} else {
+			for _, day := range strings.Split(days, ",") {
+				if "" != strings.TrimSpace(day) {
+					if _, err := time.Parse(DAY_FORMAT, day); err != nil {
+						return false, sectionName + " day 格式不正确，必须为yyyy-MM-dd"
+					} else {
+						var queryInfo QueryInfo
+						queryInfo.From = from
+						queryInfo.FromCode = fromeCode
+						queryInfo.To = to
+						queryInfo.ToCode = toCode
+						queryInfo.Day = day
+						queryInfo.Starttime = onceSecCfg["starttime"]
+						queryInfo.Endtime = onceSecCfg["endtime"]
+						queryInfo.Train_type = onceSecCfg["train_type"]
+						queryInfo.Train = onceSecCfg["train"]
+						queryInfo.Prior_seat = onceSecCfg["prior_seat"]
+						allMissions = append(allMissions, queryInfo)
+					}
+				}
+			}
+		}
 	}
-	easylog.Debug("allMissions:", allMissions)
+	if len(allMissions) < 1 {
+		return false, ""
+	}
+	easylog.Info("allMissions:", allMissions)
 
 	initConfFlag = true
 	return true, "任务配置初始化成功"
@@ -417,7 +481,8 @@ func StartMission() {
 	}
 	//开启定时任务
 	ticker := time.NewTicker(time.Duration(period) * time.Minute)
-	easylog.Info("任务开始.周期=", period, "总任务数=", len(allMissions))
+	easylog.Info("任务开始.周期=", period, ",总任务数=", len(allMissions),
+		",是否并行=", async, ",失败重试次数=", retry, ",重试休眠间隔=", retryPeriod, "s")
 	go oneJob()
 	for range ticker.C {
 		go oneJob()
