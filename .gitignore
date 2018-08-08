@@ -1,7 +1,7 @@
 .idea/
 *.iml
-vendor/
 
+logs/
 leftTicket.log*
 station_name.js
 

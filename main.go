@@ -7,6 +7,7 @@ import (
 
 	"github.com/SpringDRen/easylog"
 	"github.com/SpringDRen/leftTicket/lefttk"
+	"os"
 )
 
 //日志
@@ -21,6 +22,9 @@ func initLog() {
 	dir, ok := logcfg["dir"]
 	if !ok {
 		dir = "./"
+	}
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.Mkdir(dir, os.ModeDir)
 	}
 	name, ok := logcfg["name"]
 	if !ok {
