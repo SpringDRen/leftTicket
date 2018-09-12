@@ -4,8 +4,8 @@
 [[projects]]
   name = "github.com/SpringDRen/easylog"
   packages = ["."]
-  revision = "3c74a39e536023d34f1841d7c90f8bca4419c6e0"
-  version = "1.0.0"
+  revision = "0e0e7e54ad612894d27c6ebfc8db9288829d5fd2"
+  version = "1.0.2"
 
 [[projects]]
   name = "gopkg.in/ini.v1"
@@ -16,6 +16,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "b28225e8a4e04e2569ac2456c65a46d804773b93dce8a3e6ac850a92b5ecc58c"
+  inputs-digest = "c536b01eba2ece9f76e92393b5c255370b7c2da8d7141fe6490e72f456a03bf6"
   solver-name = "gps-cdcl"
   solver-version = 1

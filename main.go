@@ -8,6 +8,7 @@ import (
 	"github.com/SpringDRen/easylog"
 	"github.com/SpringDRen/leftTicket/lefttk"
 	"os"
+	"fmt"
 )
 
 //日志
@@ -24,7 +25,11 @@ func initLog() {
 		dir = "./"
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		os.Mkdir(dir, os.ModeDir)
+		// try create dir
+		err := os.MkdirAll(dir, os.ModePerm)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "can't create %s dir", dir)
+		}
 	}
 	name, ok := logcfg["name"]
 	if !ok {
