@@ -1,20 +1,19 @@
 # leftTicket
 
 `leftTicket`是一个基于12306 [web官网](https://kyfw.12306.cn/otn/leftTicket/init) 余票查询程序，并提供两种通知方式：smtp邮件、企业微信号。<br>
-基于[queryLeftTicket_end_UAM_js.js?scriptVersion=1.9035](https://kyfw.12306.cn/otn/resources/merged/queryLeftTicket_end_UAM_js.js?scriptVersion=1.9035) 开发。更新日期：2018-08-08.
+基于[queryLeftTicket_end_UAM_js.js?scriptVersion=1.9035](https://kyfw.12306.cn/otn/resources/merged/queryLeftTicket_end_UAM_js.js?scriptVersion=1.9035) 开发。更新日期：2024-02-05.
 
 - windws 64位下载：[下载页面](https://github.com/SpringDRen/leftTicket/releases)
 - 其他系统自行编译
 
 ## Build and run
 
-- sdk：go1.8.3, go1.9,go1.10 测试均无问题
-- dep 本工程使用golang包管理工具dep进行包管理。
-- 安装dep `go get -u github.com/golang/dep/cmd/dep`
+- sdk：go1.21.6
+- go mod 管理依赖
 
-`go get github.com/SpringDRen/leftTicket` 或者下载压缩包均可（注：解压包之后要将项目放在gopath目录下）。进入此项目目录`cd $GOPATH/github.com/SpringDRen/leftTicket`。
+`go install github.com/SpringDRen/leftTicket` 或者下载压缩包均可（注：解压包之后要将项目放在gopath目录下）。进入此项目目录`cd $GOPATH/github.com/SpringDRen/leftTicket`。
 
-1. 包初始化 `dep ensure` ;更新依赖 `dep ensure -update`
+1. 包初始化 `go mod init` ; 依赖文件夹 `go mod vendor` ;更新依赖 `go mod tidy`
 2. 程序运行依赖配置文件 ./conf/12306.ini、./conf/conf.ini；先修改配置文件
 3. 运行或编译 `go run main.go` or `go build`
 
